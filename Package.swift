@@ -18,8 +18,8 @@ import PackageDescription
 let package = Package(
     name: "Linguistics",
     platforms: [
-            .macOS(.v10_14),
-            .iOS( .v14 ),
+            .macOS(.v11),
+            .iOS(.v14),
         ],
     products: [
         // Products define the executables and libraries a package produces, making them visible to other packages.
@@ -28,14 +28,12 @@ let package = Package(
             targets: ["Linguistics"]
         ),
     ],
-    dependencies: [
-        .package(url: "https://github.com/huggingface/swift-transformers", from: "0.1.5")
-    ],
+    dependencies: [],
     targets: [
         // Targets are the basic building blocks of a package, defining a module or a test suite.
         // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "Linguistics",
+            name: "Linguistics"
         ),
         .testTarget(
             name: "LinguisticsTests",
