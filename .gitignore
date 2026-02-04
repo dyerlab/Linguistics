@@ -1,0 +1,28 @@
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Xcode
+xcuserdata/
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Python
+python/bin/
+python/lib/
+python/include/
+python/pyvenv.cfg
+__pycache__/
+*.pyc
+
+
+
+
+.claude/*
+
+
