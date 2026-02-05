@@ -18,22 +18,33 @@ import PackageDescription
 let package = Package(
     name: "Linguistics",
     platforms: [
-            .macOS(.v11),
-            .iOS(.v14),
-        ],
+        .macOS(.v14),
+        .iOS(.v17),
+    ],
     products: [
-        // Products define the executables and libraries a package produces, making them visible to other packages.
         .library(
             name: "Linguistics",
             targets: ["Linguistics"]
         ),
     ],
-    dependencies: [],
+    dependencies: [
+        // MLX for Apple Silicon acceleration
+        .package(url: "https://github.com/ml-explore/mlx-swift", from: "0.21.0"),
+        // MLX-LM includes MLXEmbedders for encoder models
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
+        // HuggingFace utilities for tokenizers and model hub
+        .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+    ],
     targets: [
-        // Targets are the basic building blocks of a package, defining a module or a test suite.
-        // Targets can depend on other targets in this package and products from dependencies.
         .target(
-            name: "Linguistics"
+            name: "Linguistics",
+            dependencies: [
+                .product(name: "MLX", package: "mlx-swift"),
+                .product(name: "MLXNN", package: "mlx-swift"),
+                .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "Transformers", package: "swift-transformers"),
+            ]
         ),
         .testTarget(
             name: "LinguisticsTests",

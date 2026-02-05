@@ -220,6 +220,7 @@ public extension String {
 
     /// Remove stopwords from a token list.
     /// - Parameters:
+    ///   - tokens: The token list
     ///   - stopwords: Stopword set to remove.
     ///   - keepNumerics: Whether to keep purely numeric tokens.
     /// - Returns: Filtered token list.
