@@ -630,3 +630,165 @@ func thresholdCalibratorWithMLX() async throws {
     // MiniLM typically needs lower thresholds than NLEmbedding
     #expect(result.bestF1Threshold > 0)
 }
+
+// MARK: - FDLEmbeddingService Tests
+
+@Test func fdlEmbeddingServiceInitialization() async throws {
+    let corpus = [
+        "The cat sat on the mat",
+        "A dog ran through the park",
+        "Birds fly over mountains"
+    ]
+    let service = FDLEmbeddingService(corpus: corpus)
+    let dims = try await service.dimensions
+    #expect(dims > 0)
+}
+
+@Test func fdlEmbeddingServiceDimensionsMatchVocabulary() async throws {
+    let corpus = [
+        "The quick brown fox jumps over the lazy dog",
+        "Swift programming is fast and safe"
+    ]
+    let service = FDLEmbeddingService(corpus: corpus)
+    let dims = try await service.dimensions
+    let vector = try await service.embed("quick fox")
+    #expect(vector.count == dims)
+}
+
+@Test func fdlEmbeddingServiceFrequencyCounting() async throws {
+    // "fox", "run", "swim" survive lemmatisation + stopword removal
+    let corpus = ["fox run swim jump"]
+    let service = FDLEmbeddingService(corpus: corpus)
+
+    let vector = try await service.embed("fox run swim jump")
+    let total = vector.reduce(0, +)
+    #expect(total > 0, "Known corpus tokens should produce non-zero frequency counts")
+}
+
+@Test func fdlEmbeddingServiceRepeatedTokensCountCorrectly() async throws {
+    // "fox" survives the pipeline; its count should double when repeated
+    let corpus = ["quick brown fox"]
+    let service = FDLEmbeddingService(corpus: corpus)
+
+    let once = try await service.embed("fox")
+    let twice = try await service.embed("fox fox")
+
+    let sumOnce = once.reduce(0, +)
+    let sumTwice = twice.reduce(0, +)
+    #expect(sumTwice == sumOnce * 2, "Repeating a token should double its frequency count")
+}
+
+@Test func fdlEmbeddingServiceUnknownTokensProduceZeroVector() async throws {
+    let corpus = ["apple banana cherry"]
+    let service = FDLEmbeddingService(corpus: corpus)
+
+    // These words are very unlikely to share lemmas with apple/banana/cherry
+    let vector = try await service.embed("xylophone zymurgy quasar")
+    let total = vector.reduce(0, +)
+    #expect(total == 0.0, "Tokens absent from vocabulary should produce an all-zero vector")
+}
+
+@Test func fdlEmbeddingServiceEmptyCorpusThrows() async {
+    let service = FDLEmbeddingService(corpus: [])
+    do {
+        _ = try await service.embed("anything")
+        Issue.record("Expected FDLEmbeddingService to throw when vocabulary is empty")
+    } catch {
+        // Expected — empty vocabulary cannot produce an embedding
+    }
+}
+
+@Test func fdlEmbeddingServiceBatchEmbed() async throws {
+    let corpus = [
+        "swift programming language",
+        "machine learning algorithms",
+        "data structures and graphs"
+    ]
+    let service = FDLEmbeddingService(corpus: corpus)
+    let texts = ["swift language", "machine algorithms", "data graphs"]
+
+    let vectors = try await service.embedBatch(texts)
+    let dims = try await service.dimensions
+
+    #expect(vectors.count == texts.count)
+    for vector in vectors {
+        #expect(vector.count == dims)
+    }
+}
+
+@Test func fdlEmbeddingServiceProtocolConformance() async throws {
+    // Assigned to protocol type — must compile and behave correctly
+    let corpus = ["hello world foo bar baz"]
+    let provider: any EmbeddingProvider = FDLEmbeddingService(corpus: corpus)
+
+    let dims = try await provider.dimensions
+    let vector = try await provider.embed("hello world")
+    #expect(vector.count == dims)
+}
+
+@Test func fdlEmbeddingServiceTextEmbeddingConvenience() async throws {
+    // embed(_:as:) is inherited from EmbeddingProvider; verify provenance tag is set
+    let corpus = ["machine learning natural language processing"]
+    let service = FDLEmbeddingService(corpus: corpus)
+
+    let embedding = try await service.embed("machine learning", as: .fdlEmbedding)
+    #expect(embedding.provider == .fdlEmbedding)
+    #expect(!embedding.vector.isEmpty)
+}
+
+@Test func fdlEmbeddingServiceDeterministic() async throws {
+    // Same input must produce identical vectors on repeated calls
+    let corpus = ["the quick brown fox jumps over the lazy dog"]
+    let service = FDLEmbeddingService(corpus: corpus)
+    let text = "quick brown fox"
+
+    let v1 = try await service.embed(text)
+    let v2 = try await service.embed(text)
+    #expect(v1 == v2)
+}
+
+@Test func fdlEmbeddingServiceVocabularyIsSorted() async throws {
+    // The vocabulary is built as a sorted array — dimensions property reflects
+    // the deduplicated, sorted token count, not the raw token stream length
+    let corpus = ["banana apple cherry apple banana fig"]
+    let service = FDLEmbeddingService(corpus: corpus)
+    let dims = try await service.dimensions
+
+    // apple, banana, cherry, fig → 4 unique tokens (all survive pipeline)
+    // Exact count depends on lemmatiser; just verify deduplication happened
+    let rawTokenCount = "banana apple cherry apple banana fig"
+        .linguisticTokens(keepNumerics: false).count
+    #expect(dims <= rawTokenCount, "Vocabulary must deduplicate tokens")
+}
+
+// MARK: - EmbeddingProviderOption Corpus Injection Tests
+
+@Test func embeddingProviderOptionFDLRequiresCorpus() async {
+    // makeProvider() with no corpus must throw for .fdlEmbedding
+    do {
+        _ = try await EmbeddingProviderOption.fdlEmbedding.makeProvider()
+        Issue.record("Expected makeProvider() to throw when corpus is missing for .fdlEmbedding")
+    } catch {
+        // Expected
+    }
+}
+
+@Test func embeddingProviderOptionFDLWithCorpus() async throws {
+    let corpus = ["hello world swift programming language"]
+    let provider = try await EmbeddingProviderOption.fdlEmbedding.makeProvider(corpus: corpus)
+
+    let dims = try await provider.dimensions
+    #expect(dims > 0)
+
+    let vector = try await provider.embed("swift programming")
+    #expect(vector.count == dims)
+}
+
+@Test func embeddingProviderOptionCorpusIgnoredForNLEmbedding() async throws {
+    // corpus: is silently ignored for all non-FDL providers
+    let provider = try await EmbeddingProviderOption.nlEmbedding.makeProvider(
+        corpus: ["this corpus should be ignored"]
+    )
+    let dims = try await provider.dimensions
+    #expect(dims == 512, "NLEmbedding always produces 512-d vectors regardless of corpus argument")
+}

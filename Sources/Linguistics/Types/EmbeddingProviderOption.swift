@@ -11,6 +11,8 @@
 /// provenance when storing or transmitting `TextEmbedding` values across
 /// domain packages (Objectives, Places, etc.).
 public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
+    
+    case fdlEmbedding       // FDLEmbeddingService - VariableD, frequency dependent, offline.
     case nlEmbedding        // NLEmbeddingService — 512d, instant, offline
     case miniLM             // MLXEmbeddingService(.miniLM) — 384d, ~90 MB
     case bgeBase            // MLXEmbeddingService(.bgeBase) — 768d, ~400 MB
@@ -22,6 +24,7 @@ public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
 
     public var displayName: String {
         switch self {
+        case .fdlEmbedding:     return "FDL (VariableD, frequency dependent, offline)"
         case .nlEmbedding:      return "Natural Language (512d, offline)"
         case .miniLM:           return "MiniLM (384d, ~90 MB)"
         case .bgeBase:          return "BGE Base (768d, ~400 MB)"
@@ -36,8 +39,16 @@ public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
     public var requiresDownload: Bool { self != .nlEmbedding }
 
     /// Creates and returns the corresponding ``EmbeddingProvider``.
-    public func makeProvider() async throws -> any EmbeddingProvider {
+    ///
+    /// - Parameter corpus: Required only for ``fdlEmbedding``; ignored by all other cases.
+    ///   Pass the full set of documents whose vocabulary should define the embedding space.
+    public func makeProvider(corpus: [String]? = nil) async throws -> any EmbeddingProvider {
         switch self {
+        case .fdlEmbedding:
+            guard let corpus else {
+                throw NLEmbeddingError.encodingFailed("FDLEmbeddingService requires a corpus — pass corpus: to makeProvider().")
+            }
+            return FDLEmbeddingService(corpus: corpus)
         case .nlEmbedding:      return try NLEmbeddingService()
         case .miniLM:           return try await MLXEmbeddingService(model: .miniLM)
         case .bgeBase:          return try await MLXEmbeddingService(model: .bgeBase)

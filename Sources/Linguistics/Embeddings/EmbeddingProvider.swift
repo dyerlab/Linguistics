@@ -69,6 +69,11 @@ public protocol EmbeddingProvider: Sendable {
     /// The returned vector is typically L2-normalized, meaning its magnitude equals 1.
     /// This allows cosine similarity to be computed as a simple dot product.
     ///
+    /// > Note: ``FDLEmbeddingService`` is an exception — it returns raw frequency-count
+    /// > vectors that are **not** normalized. Call `vector.normal` (MatrixStuff) on the
+    /// > result before comparing scores across providers or when cosine similarity is
+    /// > required. See <doc:fdl-vector-normalization> for details.
+    ///
     /// - Parameter text: The text to embed (word, sentence, or paragraph)
     /// - Returns: A normalized float vector of length ``dimensions``
     /// - Throws: An error if the text cannot be encoded
