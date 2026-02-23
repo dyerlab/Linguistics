@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MatrixStuff
 
 // MARK: - EmbeddingProvider Protocol
 
@@ -34,7 +35,7 @@ import Foundation
 ///         get async throws { 768 }
 ///     }
 ///
-///     func embed(_ text: String) async throws -> [Float] {
+///     func embed(_ text: String) async throws -> Vector {
 ///         // Your embedding logic here
 ///     }
 /// }
@@ -78,7 +79,7 @@ public protocol EmbeddingProvider: Sendable {
     /// let embedding = try await provider.embed("Hello, world!")
     /// print("Vector length: \(embedding.count)")
     /// ```
-    func embed(_ text: String) async throws -> [Float]
+    func embed(_ text: String) async throws -> Vector
 
     /// Generates embedding vectors for multiple texts.
     ///
@@ -96,7 +97,7 @@ public protocol EmbeddingProvider: Sendable {
     /// let embeddings = try await provider.embedBatch(texts)
     /// // embeddings.count == 3
     /// ```
-    func embedBatch(_ texts: [String]) async throws -> [[Float]]
+    func embedBatch(_ texts: [String]) async throws -> [Vector]
 
     /// Calculates the cosine similarity between two texts.
     ///
@@ -130,8 +131,8 @@ public extension EmbeddingProvider {
     ///
     /// Override this method in your implementation if your backend supports
     /// more efficient batch processing.
-    func embedBatch(_ texts: [String]) async throws -> [[Float]] {
-        var results: [[Float]] = []
+    func embedBatch(_ texts: [String]) async throws -> [Vector] {
+        var results: [Vector] = []
         for text in texts {
             let embedding = try await embed(text)
             results.append(embedding)
@@ -152,8 +153,8 @@ public extension EmbeddingProvider {
     /// Computes cosine similarity between two vectors.
     ///
     /// Assumes vectors are already normalized (returns dot product).
-    private func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+    private func cosineSimilarity(_ a: Vector, _ b: Vector) -> Float {
         guard a.count == b.count else { return 0 }
-        return zip(a, b).map(*).reduce(0, +)
+        return Float(zip(a, b).map(*).reduce(0, +))
     }
 }

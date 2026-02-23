@@ -34,6 +34,8 @@ let package = Package(
         .package(url: "https://github.com/ml-explore/mlx-swift-lm", branch: "main"),
         // HuggingFace utilities for tokenizers and model hub
         .package(url: "https://github.com/huggingface/swift-transformers", from: "1.1.6"),
+        // Shared math primitives (Vector = [Double], Matrix, etc.)
+        .package(path: "../MatrixStuff"),
     ],
     targets: [
         .target(
@@ -44,6 +46,7 @@ let package = Package(
                 .product(name: "MLXEmbedders", package: "mlx-swift-lm"),
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Transformers", package: "swift-transformers"),
+                .product(name: "MatrixStuff", package: "MatrixStuff"),
             ]
         ),
         .testTarget(

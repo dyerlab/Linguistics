@@ -123,7 +123,7 @@ func mlxEmbeddingServiceIntegration() async throws {
 
     // Debug: Check pooling info by comparing raw embeddings
     let testEmb = try await service.embed("test")
-    print("Embedding stats - min: \(testEmb.min()!), max: \(testEmb.max()!), mean: \(testEmb.reduce(0, +) / Float(testEmb.count))")
+    print("Embedding stats - min: \(testEmb.min()!), max: \(testEmb.max()!), mean: \(testEmb.reduce(0, +) / Double(testEmb.count))")
     #expect(dims == 1024)  // mxbai-embed-large produces 1024 dims
 
     // Test single embedding
