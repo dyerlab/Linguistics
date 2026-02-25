@@ -10,6 +10,11 @@
 /// `EmbeddingProviderOption` is a portable, `Codable` tag used to record
 /// provenance when storing or transmitting `TextEmbedding` values across
 /// domain packages (Objectives, Places, etc.).
+///
+
+import SwiftUI
+
+
 public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
     
     case fdlEmbedding       // FDLEmbeddingService - VariableD, frequency dependent, offline.
@@ -36,6 +41,53 @@ public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
         }
     }
 
+    public var abbreviation: String {
+        switch self {
+        case .fdlEmbedding:
+            "fdl"
+        case .nlEmbedding:
+            "nl"
+        case .miniLM:
+            "miniLM"
+        case .bgeBase:
+            "bge"
+        case .bgeLarge:
+            "bgeLG"
+        case .mxbaiEmbedLarge:
+            "mxbai"
+        case .qwen3Embedding:
+            "qwen"
+        case .nomicTextV1_5:
+            "nomic"
+        case .custom(let string):
+            "custom"
+        }
+    }
+    
+    public var color: Color {
+        switch self {
+        case .fdlEmbedding:
+            Color.red
+        case .nlEmbedding:
+            Color.orange
+        case .miniLM:
+            Color.yellow
+        case .bgeBase:
+            Color.green
+        case .bgeLarge:
+            Color.mint
+        case .mxbaiEmbedLarge:
+            Color.teal
+        case .qwen3Embedding:
+            Color.blue
+        case .nomicTextV1_5:
+            Color.indigo
+        case .custom(let string):
+            Color.gray
+        }
+    }
+    
+    
     public var requiresDownload: Bool { self != .nlEmbedding }
 
     /// Creates and returns the corresponding ``EmbeddingProvider``.
