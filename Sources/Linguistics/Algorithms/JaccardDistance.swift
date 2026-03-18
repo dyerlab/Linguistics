@@ -8,7 +8,7 @@
 import Foundation
 
 
-func jaccardSimilarity( a: Set<String>, b: Set<String>) -> CGFloat {
+public func jaccardSimilarity( a: Set<String>, b: Set<String>) -> CGFloat {
     guard !a.isEmpty, !b.isEmpty else { return 0 }
     let inter = a.intersection(b).count
     let uni = a.union(b).count

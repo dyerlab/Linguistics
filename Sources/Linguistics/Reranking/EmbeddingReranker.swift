@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MatrixStuff
 
 // MARK: - EmbeddingReranker
 
@@ -107,9 +108,9 @@ public struct EmbeddingReranker: Reranker, Sendable {
     }
 
     /// Computes cosine similarity between two vectors.
-    private func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+    private func cosineSimilarity(_ a: Vector, _ b: Vector) -> Float {
         guard a.count == b.count else { return 0 }
         // Assuming normalized vectors
-        return zip(a, b).map(*).reduce(0, +)
+        return Float(zip(a, b).map(*).reduce(0, +))
     }
 }

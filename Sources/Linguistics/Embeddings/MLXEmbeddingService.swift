@@ -7,6 +7,7 @@
 
 import Foundation
 import Hub
+import MatrixStuff
 import MLX
 import MLXEmbedders
 import Tokenizers
@@ -260,7 +261,7 @@ public actor MLXEmbeddingService: EmbeddingProvider {
     /// The vector is L2-normalized for cosine similarity computation.
     ///
     /// - Parameter text: The text to embed (sentence or paragraph)
-    /// - Returns: L2-normalized float vector
+    /// - Returns: L2-normalized vector
     /// - Throws: ``MLXEmbeddingError/encodingFailed(_:_:)`` if encoding fails
     ///
     /// ## Example
@@ -269,7 +270,7 @@ public actor MLXEmbeddingService: EmbeddingProvider {
     /// let embedding = try await service.embed("Machine learning is fascinating.")
     /// print("Vector dimensions: \(embedding.count)")
     /// ```
-    public func embed(_ text: String) async throws -> [Float] {
+    public func embed(_ text: String) async throws -> Vector {
         await container.perform { model, tokenizer, pooler in
             // Tokenize - returns [Int] of token IDs
             let tokenIds = tokenizer.encode(text: text)
@@ -297,7 +298,7 @@ public actor MLXEmbeddingService: EmbeddingProvider {
             let pooled = meanPooler(output, mask: attentionMask, normalize: true)
 
             eval(pooled)
-            return pooled.squeezed(axis: 0).asArray(Float.self)
+            return pooled.squeezed(axis: 0).asArray(Float.self).map { Double($0) }
         }
     }
 
@@ -307,11 +308,11 @@ public actor MLXEmbeddingService: EmbeddingProvider {
     /// Future versions may support true batching for improved throughput.
     ///
     /// - Parameter texts: Array of texts to embed
-    /// - Returns: Array of L2-normalized float vectors
+    /// - Returns: Array of L2-normalized vectors
     /// - Throws: ``MLXEmbeddingError/encodingFailed(_:_:)`` if encoding fails
-    public func embedBatch(_ texts: [String]) async throws -> [[Float]] {
+    public func embedBatch(_ texts: [String]) async throws -> [Vector] {
         // Process texts sequentially to avoid memory issues with large batches
-        var results: [[Float]] = []
+        var results: [Vector] = []
         for text in texts {
             let embedding = try await embed(text)
             results.append(embedding)
@@ -330,7 +331,7 @@ public actor MLXEmbeddingService: EmbeddingProvider {
         let emb1 = try await embed(text1)
         let emb2 = try await embed(text2)
         // Vectors are already L2-normalized, so dot product = cosine similarity
-        return zip(emb1, emb2).map(*).reduce(0, +)
+        return Float(zip(emb1, emb2).map(*).reduce(0, +))
     }
 }
 

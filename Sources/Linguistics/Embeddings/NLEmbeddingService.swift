@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MatrixStuff
 import NaturalLanguage
 
 // MARK: - NLEmbeddingService
@@ -121,7 +122,7 @@ public final class NLEmbeddingService: @unchecked Sendable {
     /// Words are lowercased before lookup.
     ///
     /// - Parameter word: The word to embed
-    /// - Returns: Float vector of length 512, or `nil` if word not in vocabulary
+    /// - Returns: Vector of length 512, or `nil` if word not in vocabulary
     ///
     /// ## Example
     ///
@@ -130,11 +131,8 @@ public final class NLEmbeddingService: @unchecked Sendable {
     ///     print("Embedding dimensions: \(vector.count)")  // 512
     /// }
     /// ```
-    public func embedWord(_ word: String) -> [Float]? {
-        guard let vector = wordEmbedding.vector(for: word.lowercased()) else {
-            return nil
-        }
-        return vector.map { Float($0) }
+    public func embedWord(_ word: String) -> Vector? {
+        return wordEmbedding.vector(for: word.lowercased())
     }
 
     /// Checks if a word exists in the embedding vocabulary.
@@ -204,7 +202,7 @@ public final class NLEmbeddingService: @unchecked Sendable {
     // MARK: - Private Helpers
 
     /// Embeds text by averaging word vectors.
-    private func embedText(_ text: String) -> [Float]? {
+    private func embedText(_ text: String) -> Vector? {
         let tokens = tokenize(text)
         guard !tokens.isEmpty else { return nil }
 
@@ -232,7 +230,7 @@ public final class NLEmbeddingService: @unchecked Sendable {
         averaged = averaged.map { $0 / count }
 
         // Normalize
-        return normalize(averaged).map { Float($0) }
+        return normalize(averaged)
     }
 
     /// Tokenizes text into words suitable for embedding lookup.
@@ -278,9 +276,9 @@ extension NLEmbeddingService: EmbeddingProvider {
     /// Words not in the vocabulary are skipped.
     ///
     /// - Parameter text: The text to embed
-    /// - Returns: Normalized float vector of length 512
+    /// - Returns: Normalized vector of length 512
     /// - Throws: ``NLEmbeddingError/encodingFailed(_:)`` if no valid words found
-    public func embed(_ text: String) async throws -> [Float] {
+    public func embed(_ text: String) async throws -> Vector {
         guard let embedding = embedText(text) else {
             throw NLEmbeddingError.encodingFailed(text)
         }
@@ -292,7 +290,7 @@ extension NLEmbeddingService: EmbeddingProvider {
     /// - Parameter texts: Array of texts to embed
     /// - Returns: Array of embedding vectors
     /// - Throws: ``NLEmbeddingError/encodingFailed(_:)`` if any text has no valid words
-    public func embedBatch(_ texts: [String]) async throws -> [[Float]] {
+    public func embedBatch(_ texts: [String]) async throws -> [Vector] {
         try texts.map { text in
             guard let embedding = embedText(text) else {
                 throw NLEmbeddingError.encodingFailed(text)
@@ -312,7 +310,7 @@ extension NLEmbeddingService: EmbeddingProvider {
         let emb1 = try await embed(text1)
         let emb2 = try await embed(text2)
         // Vectors are already normalized, so dot product = cosine similarity
-        return zip(emb1, emb2).map(*).reduce(0, +)
+        return Float(zip(emb1, emb2).map(*).reduce(0, +))
     }
 }
 

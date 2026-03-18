@@ -1,0 +1,114 @@
+//
+//  EmbeddingProviderOption.swift
+//  Linguistics
+//
+//  Created by Rodney Dyer on 2/20/26.
+//
+
+/// Identifies which embedding provider and model produced a given vector.
+///
+/// `EmbeddingProviderOption` is a portable, `Codable` tag used to record
+/// provenance when storing or transmitting `TextEmbedding` values across
+/// domain packages (Objectives, Places, etc.).
+///
+
+import SwiftUI
+
+
+public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
+    
+    case fdlEmbedding       // FDLEmbeddingService - VariableD, frequency dependent, offline.
+    case nlEmbedding        // NLEmbeddingService — 512d, instant, offline
+    case miniLM             // MLXEmbeddingService(.miniLM) — 384d, ~90 MB
+    case bgeBase            // MLXEmbeddingService(.bgeBase) — 768d, ~400 MB
+    case bgeLarge           // MLXEmbeddingService(.bgeLarge) — 1024d, ~1.2 GB
+    case mxbaiEmbedLarge    // MLXEmbeddingService(.mxbaiEmbedLarge) — 1024d, ~1.2 GB
+    case qwen3Embedding     // MLXEmbeddingService(.qwen3Embedding) — 4-bit quantized
+    case nomicTextV1_5      // MLXEmbeddingService(.nomicTextV1_5) — Matryoshka
+    case custom(String)     // Any HuggingFace Hub ID
+
+    public var displayName: String {
+        switch self {
+        case .fdlEmbedding:     return "FDL (VariableD, frequency dependent, offline)"
+        case .nlEmbedding:      return "Natural Language (512d, offline)"
+        case .miniLM:           return "MiniLM (384d, ~90 MB)"
+        case .bgeBase:          return "BGE Base (768d, ~400 MB)"
+        case .bgeLarge:         return "BGE Large (1024d, ~1.2 GB)"
+        case .mxbaiEmbedLarge:  return "mxbai-embed-large (1024d, ~1.2 GB)"
+        case .qwen3Embedding:   return "Qwen3 Embedding (4-bit quantized)"
+        case .nomicTextV1_5:    return "Nomic Embed Text v1.5"
+        case .custom(let id):   return id
+        }
+    }
+
+    public var abbreviation: String {
+        switch self {
+        case .fdlEmbedding:
+            "fdl"
+        case .nlEmbedding:
+            "nl"
+        case .miniLM:
+            "miniLM"
+        case .bgeBase:
+            "bge"
+        case .bgeLarge:
+            "bgeLG"
+        case .mxbaiEmbedLarge:
+            "mxbai"
+        case .qwen3Embedding:
+            "qwen"
+        case .nomicTextV1_5:
+            "nomic"
+        case .custom(let string):
+            "custom"
+        }
+    }
+    
+    public var color: Color {
+        switch self {
+        case .fdlEmbedding:
+            Color.red
+        case .nlEmbedding:
+            Color.orange
+        case .miniLM:
+            Color.yellow
+        case .bgeBase:
+            Color.green
+        case .bgeLarge:
+            Color.mint
+        case .mxbaiEmbedLarge:
+            Color.teal
+        case .qwen3Embedding:
+            Color.blue
+        case .nomicTextV1_5:
+            Color.indigo
+        case .custom(let string):
+            Color.gray
+        }
+    }
+    
+    
+    public var requiresDownload: Bool { self != .nlEmbedding }
+
+    /// Creates and returns the corresponding ``EmbeddingProvider``.
+    ///
+    /// - Parameter corpus: Required only for ``fdlEmbedding``; ignored by all other cases.
+    ///   Pass the full set of documents whose vocabulary should define the embedding space.
+    public func makeProvider(corpus: [String]? = nil) async throws -> any EmbeddingProvider {
+        switch self {
+        case .fdlEmbedding:
+            guard let corpus else {
+                throw NLEmbeddingError.encodingFailed("FDLEmbeddingService requires a corpus — pass corpus: to makeProvider().")
+            }
+            return FDLEmbeddingService(corpus: corpus)
+        case .nlEmbedding:      return try NLEmbeddingService()
+        case .miniLM:           return try await MLXEmbeddingService(model: .miniLM)
+        case .bgeBase:          return try await MLXEmbeddingService(model: .bgeBase)
+        case .bgeLarge:         return try await MLXEmbeddingService(model: .bgeLarge)
+        case .mxbaiEmbedLarge:  return try await MLXEmbeddingService(model: .mxbaiEmbedLarge)
+        case .qwen3Embedding:   return try await MLXEmbeddingService(model: .qwen3Embedding)
+        case .nomicTextV1_5:    return try await MLXEmbeddingService(model: .nomicTextV1_5)
+        case .custom(let id):   return try await MLXEmbeddingService(model: .custom(id))
+        }
+    }
+}
