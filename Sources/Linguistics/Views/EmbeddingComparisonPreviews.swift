@@ -446,6 +446,7 @@ public struct PreviewComparisonView: View {
 
 // MARK: - Previews
 
+#if !SPM_BUILD
 #Preview("Good Discrimination") {
     PreviewComparisonView(viewModel: PreviewViewModels.goodDiscrimination())
 }
@@ -465,3 +466,4 @@ public struct PreviewComparisonView: View {
 #Preview("Error State") {
     PreviewComparisonView(viewModel: PreviewViewModels.withError())
 }
+#endif

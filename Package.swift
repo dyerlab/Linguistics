@@ -50,6 +50,15 @@ let package = Package(
             ],
             resources: [
                 .process("Data"),
+            ],
+            swiftSettings: [
+                // Guard #Preview macros that require Xcode's PreviewsMacros plugin.
+                // SPM command-line builds (swift build / swift test) define this flag
+                // automatically; use #if !SPM_BUILD around any #Preview blocks.
+                .define("SPM_BUILD"),
+            ],
+            linkerSettings: [
+                .linkedLibrary("sqlite3"),
             ]
         ),
         .testTarget(

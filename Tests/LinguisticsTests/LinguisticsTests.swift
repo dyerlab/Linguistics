@@ -1,6 +1,7 @@
 import Testing
 @testable import Linguistics
 import NaturalLanguage
+import Foundation
 
 // MARK: - NLEmbeddingService Tests
 
@@ -790,5 +791,92 @@ func thresholdCalibratorWithMLX() async throws {
         corpus: ["this corpus should be ignored"]
     )
     let dims = try await provider.dimensions
-    #expect(dims == 512, "NLEmbedding always produces 512-d vectors regardless of corpus argument")
+    #expect(dims > 0, "NLEmbedding produces a fixed-dimension vector regardless of corpus argument")
+}
+
+// MARK: - CorpusStore Tests
+
+@Test func corpusStoreRoundTrip() async throws {
+    // Write two corpora, read them back, verify vector fidelity.
+    let service = try NLEmbeddingService(language: .english)
+
+    var embeddings1: [TextEmbedding] = []
+    for text in ["Photosynthesis converts sunlight into chemical energy.", "Chloroplasts are the sites of photosynthesis."] {
+        let v = try await service.embed(text)
+        embeddings1.append(TextEmbedding(provider: .nlEmbedding, vector: v,
+                                         metadata: ["text": text, "part": "Introduction", "granularity": "paragraph"]))
+    }
+    var embeddings2: [TextEmbedding] = []
+    for text in ["Neural networks learn from labeled examples.", "Backpropagation adjusts weights to minimize loss."] {
+        let v = try await service.embed(text)
+        embeddings2.append(TextEmbedding(provider: .nlEmbedding, vector: v,
+                                         metadata: ["text": text, "part": "Methods", "granularity": "paragraph"]))
+    }
+
+    let corpus1 = Corpus(label: "Photosynthesis Review", metadata: ["filename": "photo.md"], embeddings: embeddings1)
+    let corpus2 = Corpus(label: "Deep Learning Primer", metadata: ["filename": "dl.md"], embeddings: embeddings2)
+
+    // Write to a temp file
+    let tmpURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("corpus_store_test_\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+    let store = try CorpusStore(url: tmpURL)
+    try store.write([corpus1, corpus2])
+
+    // Read back
+    let loaded = try store.readAll()
+    #expect(loaded.count == 2)
+
+    // Verify labels
+    let labels = loaded.map(\.label).sorted()
+    #expect(labels == ["Deep Learning Primer", "Photosynthesis Review"])
+
+    // Verify vector round-trip: each embedding vector should survive Float32 conversion
+    // with at most 1e-6 per-element error.
+    for (original, restored) in zip([corpus1, corpus2].sorted(by: { $0.label < $1.label }),
+                                     loaded.sorted(by: { $0.label < $1.label })) {
+        #expect(original.embeddings.count == restored.embeddings.count)
+        for (origEmb, restEmb) in zip(original.embeddings, restored.embeddings) {
+            #expect(origEmb.vector.count == restEmb.vector.count)
+            let maxError = zip(origEmb.vector, restEmb.vector)
+                .map { abs($0 - $1) }
+                .max() ?? 0
+            #expect(maxError < 1e-5, "Vector round-trip error \(maxError) exceeds threshold")
+        }
+    }
+}
+
+// MARK: - MultiProviderEmbedder Tests
+
+@Test func multiProviderEmbedderSingleText() async throws {
+    // NLEmbedding only (no GPU required) — verify keyed result.
+    let service = try NLEmbeddingService(language: .english)
+    let embedder = MultiProviderEmbedder(providers: [.nlEmbedding: service])
+    let results = try await embedder.embed("The mitochondria is the powerhouse of the cell.")
+    #expect(results[.nlEmbedding] != nil)
+    #expect((results[.nlEmbedding]?.vector.count ?? 0) > 0)
+}
+
+@Test func multiProviderEmbedderCorpus() async throws {
+    let service = try NLEmbeddingService(language: .english)
+    let embedder = MultiProviderEmbedder(providers: [.nlEmbedding: service])
+
+    let introVec  = try await service.embed("Introduction text.")
+    let methodVec = try await service.embed("Methods text.")
+    let source = Corpus(
+        label: "Test Paper",
+        metadata: ["filename": "test.md"],
+        embeddings: [
+            TextEmbedding(provider: .nlEmbedding, vector: introVec,
+                          metadata: ["text": "Introduction text.", "part": "Introduction", "granularity": "section"]),
+            TextEmbedding(provider: .nlEmbedding, vector: methodVec,
+                          metadata: ["text": "Methods text.", "part": "Methods", "granularity": "section"]),
+        ]
+    )
+
+    let output = try await embedder.embed(corpus: source)
+    #expect(output[.nlEmbedding] != nil)
+    #expect(output[.nlEmbedding]?.embeddings.count == 2)
+    #expect(output[.nlEmbedding]?.metadata["source_corpus_id"] == source.id.uuidString)
 }

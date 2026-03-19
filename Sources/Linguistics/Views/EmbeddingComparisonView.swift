@@ -904,6 +904,7 @@ struct GapBar: View {
 
 // MARK: - Previews
 
+#if !SPM_BUILD
 #Preview("Empty State") {
     EmbeddingComparisonView()
 }
@@ -913,3 +914,4 @@ struct GapBar: View {
     // Results would be populated after running comparison
     return view
 }
+#endif

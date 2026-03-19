@@ -615,6 +615,7 @@ public struct LegendItem: View {
 
 // MARK: - Chart Previews
 
+#if !SPM_BUILD
 #Preview("Discrimination Gap Chart") {
     DiscriminationGapChart(results: PreviewViewModels.goodDiscrimination().comparisonResults)
         .padding()
@@ -659,3 +660,4 @@ public struct LegendItem: View {
         .padding()
     }
 }
+#endif
