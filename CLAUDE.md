@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Package Overview
 
-`Linguistics` is a Swift 6.2 SPM library (macOS 14+ / iOS 17+) providing NLP and ML primitives: text embeddings, semantic reranking, text analysis (sentiment, readability, tokenization, lemmatization), and benchmarking utilities. It ships a SwiftUI comparison view for evaluating embedding models on custom data.
+`Linguistics` is a Swift 6.2 SPM library (macOS 14+ / iOS 17+) providing NLP and ML primitives: text embeddings, semantic reranking, text analysis (sentiment, readability, tokenization, lemmatization), document/manuscript loading, academic program corpus construction, and benchmarking utilities. It ships a SwiftUI comparison view for evaluating embedding models on custom data.
 
 ## Build & Test Commands
 
@@ -86,10 +86,31 @@ Typical pipeline: fast embedding retrieval (top-100) → cross-encoder reranker 
 - **`EmbeddingComparisonView`** + **`EmbeddingComparisonViewModel`** — full interactive UI for entering custom text pairs, running NLEmbedding or full GPU comparison, viewing discrimination charts, and generating provider/reranker/threshold recommendations.
 - **`EmbeddingCharts.swift`** / **`EmbeddingComparisonPreviews.swift`** — chart sub-views used by the comparison view.
 
+### Document Loading (`Loaders/`)
+
+These types support loading structured text corpora from Markdown manuscripts and academic-program CSV files.
+
+**Document structure types:**
+- **`ManuscriptParts`** (`Loaders/ManuscriptParts.swift`) — `Codable, CaseIterable, Sendable` enum: `.Title`, `.Abstract`, `.Introduction`, `.Methods`, `.Results`, `.Discussion`, `.Other`.
+- **`SectionRule`** (`Loaders/SectionRule.swift`) — `Sendable` struct pairing a regex `pattern: String` with a `type: ManuscriptParts`. Used inside `DocumentProfile`.
+- **`DocumentProfile`** (`Loaders/DocumentProfile.swift`) — `Identifiable, Hashable, Sendable` struct holding `id`, `displayName`, `rules: [SectionRule]`, and `fallbackType: ManuscriptParts`. `classify(_ line:)` strips leading numbering then matches rules in order; unmatched lines return `nil`. Static preset `.scientificPaper` covers standard IMRaD structure.
+- **`EmbeddingGranularity`** (`Types/EmbeddingGranularity.swift`) — `Codable, CaseIterable, Sendable` enum: `.section` (one embedding per classified section) or `.paragraph` (one per `NLTokenizer` paragraph unit within each section).
+
+**Loaders (caseless enums used as namespaces):**
+
+- **`ManuscriptLoader`** — loads Markdown files produced by PDF-to-Markdown converters (`marker`, `nougat`, etc.). Lines before the first heading are skipped. Level-1 headings not matched by the profile become `.Title`; all other headings use the profile or fall back to `fallbackType`. Each `TextEmbedding` carries metadata keys `"part"` (`ManuscriptParts.rawValue`), `"granularity"` (`EmbeddingGranularity.rawValue`), and `"text"`. The `Corpus.label` is the first level-1 heading; `Corpus.metadata` includes `"filename"` and `"doi"` (if found in the first 3 000 chars).
+  - `load(from:profile:granularity:using:as:) async throws -> Corpus`
+  - `loadAll(from:profile:granularity:using:as:) async throws -> [Corpus]` — processes all `.md` files in a directory in ascending filename order.
+
+- **`AcademicProgramLoader`** — loads a CSV with columns `University, Program, Course, Title, Credits, Bulletin`. Embeds `"\(Title) \(Bulletin)"` once per unique course per university (first-occurrence wins); `Credits` maps to `TextEmbedding.scaling` (defaults to `1.0`). Returns one `Corpus` per `(University, Program)` pair in file order; `Corpus.label` = program name, `Corpus.metadata["university"]` = university name.
+  - `load(from:using:as:) async throws -> [Corpus]`
+  - Includes a bundled sample dataset at `Sources/Linguistics/Data/vcu_stem_programs.csv`.
+
 ### Models & Types
 
-- **`TextEmbedding`** (`Models/TextEmbedding.swift`) — `Sendable, Codable, Hashable` struct bundling an `EmbeddingProviderOption` tag with a `Vector`. Used for cross-package provenance (Objectives, Places, etc.) so downstream consumers know which model produced a stored vector. Created via `provider.embed(_:as:)` convenience.
-- **`EmbeddingProviderOption`** (`Types/EmbeddingProviderOption.swift`) — `Codable, Sendable, Hashable` enum with cases for all providers: `.fdlEmbedding`, `.nlEmbedding`, `.miniLM`, `.bgeBase`, `.bgeLarge`, `.mxbaiEmbedLarge`, `.qwen3Embedding`, `.nomicTextV1_5`, `.custom(String)`. Has `displayName`, `abbreviation`, `color` (SwiftUI), and `requiresDownload` properties. `makeProvider(corpus:)` factory creates the corresponding `EmbeddingProvider`.
+- **`Corpus`** (`Models/Corpus.swift`) — `Sendable, Codable, Identifiable, Hashable` struct grouping a `[TextEmbedding]` array under a stable `UUID` id, a `label: String`, and a `metadata: [String: String]` bag. Equality and hashing are identity-based (UUID only). Designed for cross-package JSON serialization or SwiftData wrapping.
+- **`TextEmbedding`** (`Models/TextEmbedding.swift`) — `Sendable, Codable, Hashable` struct bundling an `EmbeddingProviderOption` tag with a `Vector`, a `scaling: Double` (default `1.0`), and a `metadata: [String: String]` bag. Used for cross-package provenance (Objectives, Places, etc.). Created via `provider.embed(_:as:)` convenience (sets metadata and scaling to defaults).
+- **`EmbeddingProviderOption`** (`Types/EmbeddingProviderOption.swift`) — `Codable, Sendable, Hashable` enum with cases for all providers: `.fdlEmbedding`, `.nlEmbedding`, `.miniLM`, `.bgeBase`, `.bgeLarge`, `.mxbaiEmbedLarge`, `.qwen3Embedding`, `.nomicTextV1_5`, `.custom(String)`. Has `displayName`, `abbreviation`, `color` (SwiftUI), and `requiresDownload` properties. `makeProvider(corpus:)` factory creates the corresponding `EmbeddingProvider`; `corpus:` is only required for `.fdlEmbedding`.
 
 ### Algorithms
 
