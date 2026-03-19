@@ -434,7 +434,7 @@ func benchmarkSingleModel() async throws {
     print("\nMiniLM Performance Across All Text Types:")
     print("──────────────────────────────────────────")
 
-    for (testName, pairs, favoredModel) in EmbeddingBenchmark.allTestSets {
+    for (testName, pairs, _) in EmbeddingBenchmark.allTestSets {
         let result = try await benchmark.run(
             provider: service,
             name: testName,
