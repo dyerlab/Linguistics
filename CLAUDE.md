@@ -29,12 +29,12 @@ swift test --filter nlEmbeddingServiceInitialization
 ### Core Abstraction Layer
 
 **`EmbeddingProvider`** (`Embeddings/EmbeddingProvider.swift`) — protocol with `async throws` requirements:
-- `embed(_ text: String) async throws -> [Float]`
-- `embedBatch(_ texts: [String]) async throws -> [[Float]]`
+- `embed(_ text: String) async throws -> Vector` (MatrixStuff `Vector`, not `[Float]`)
+- `embedBatch(_ texts: [String]) async throws -> [Vector]`
 - `similarity(between:and:) async throws -> Float`
 - `dimensions: Int { get async throws }`
 
-All returned vectors are L2-normalized. Default implementations of `embedBatch` and `similarity` are provided; concrete types override for efficiency.
+All returned vectors are L2-normalized (except `FDLEmbeddingService` — see below). Default implementations of `embedBatch` and `similarity` are provided; concrete types override for efficiency. A convenience overload `embed(_:as:) async throws -> TextEmbedding` is provided via extension for provenance-tagged results.
 
 **`Reranker`** (`Reranking/Reranker.swift`) — protocol for two-stage retrieval:
 - `score(query:document:) async throws -> Float`
@@ -49,12 +49,15 @@ Default implementations handle sorting and topK slicing; concrete types only nee
 |-------|-------------|-------|------------|-----------|
 | `NLEmbeddingService` | `@unchecked Sendable` class | Apple NLEmbedding (word vectors, avg pooling) | 512 | None |
 | `MLXEmbeddingService` | `actor` | Transformer (mxbaiEmbedLarge default) | 384–1024 | HuggingFace Hub → `~/.cache/huggingface/hub/` |
+| `FDLEmbeddingService` | `@unchecked Sendable` class | Corpus frequency-count (bag-of-words) | vocab size | None |
 
 `MLXEmbeddingService.Model` enum exposes `.miniLM` (384d), `.bgeBase` (768d), `.bgeLarge` (1024d), `.mxbaiEmbedLarge` (1024d), `.qwen3Embedding`, `.nomicTextV1_5`, plus `.custom(String)` and `.directory(URL)`.
 
 `NLEmbeddingService` additionally exposes word-level operations: `embedWord(_:)`, `contains(_:)`, `neighbors(for:count:)`, `distance(from:to:)`.
 
 **MLX embedding approach** (`MLXEmbeddingService.embed`): tokenizes with the HuggingFace tokenizer, runs a forward pass, then applies mean pooling (not the model's `pooledOutput`) with L2 normalization — this matches sentence-transformer convention.
+
+**FDL embedding approach** (`FDLEmbeddingService`): vocabulary built once from a corpus at `init(corpus:)` — texts are joined, lemmatized, stop-word filtered, and deduplicated into a sorted token list. `embed(_:)` returns a raw frequency-count `Vector` (one element per vocab token). **Not L2-normalized** — call `vector.normal` (MatrixStuff) before computing cosine similarity or comparing with other providers.
 
 ### Reranking Implementations
 
@@ -82,6 +85,11 @@ Typical pipeline: fast embedding retrieval (top-100) → cross-encoder reranker 
 
 - **`EmbeddingComparisonView`** + **`EmbeddingComparisonViewModel`** — full interactive UI for entering custom text pairs, running NLEmbedding or full GPU comparison, viewing discrimination charts, and generating provider/reranker/threshold recommendations.
 - **`EmbeddingCharts.swift`** / **`EmbeddingComparisonPreviews.swift`** — chart sub-views used by the comparison view.
+
+### Models & Types
+
+- **`TextEmbedding`** (`Models/TextEmbedding.swift`) — `Sendable, Codable, Hashable` struct bundling an `EmbeddingProviderOption` tag with a `Vector`. Used for cross-package provenance (Objectives, Places, etc.) so downstream consumers know which model produced a stored vector. Created via `provider.embed(_:as:)` convenience.
+- **`EmbeddingProviderOption`** (`Types/EmbeddingProviderOption.swift`) — `Codable, Sendable, Hashable` enum with cases for all providers: `.fdlEmbedding`, `.nlEmbedding`, `.miniLM`, `.bgeBase`, `.bgeLarge`, `.mxbaiEmbedLarge`, `.qwen3Embedding`, `.nomicTextV1_5`, `.custom(String)`. Has `displayName`, `abbreviation`, `color` (SwiftUI), and `requiresDownload` properties. `makeProvider(corpus:)` factory creates the corresponding `EmbeddingProvider`.
 
 ### Algorithms
 

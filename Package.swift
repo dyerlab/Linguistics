@@ -47,6 +47,9 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "Transformers", package: "swift-transformers"),
                 .product(name: "MatrixStuff", package: "MatrixStuff"),
+            ],
+            resources: [
+                .process("Data"),
             ]
         ),
         .testTarget(

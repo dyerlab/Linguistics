@@ -29,10 +29,28 @@ public struct TextEmbedding: Sendable, Codable, Hashable {
 
     /// The L2-normalized embedding vector.
     public let vector: Vector
+    
+    /// A scaling factor for the vector
+    public let scaling: Double
+    
+    /// Caller-defined descriptive metadata.
+    ///
+    /// Keys and values are unconstrained strings, allowing any labeling scheme:
+    ///
+    /// ```swift
+    /// // Research manuscript section
+    /// ["section": "Introduction", "granularity": "paragraph"]
+    ///
+    /// // Academic program course
+    /// ["course": "BIOL 101", "type": "required"]
+    /// ```
+    public let metadata: [String: String]
 
-    public init(provider: EmbeddingProviderOption, vector: Vector) {
+    public init(provider: EmbeddingProviderOption, vector: Vector, metadata: [String: String] = [:], scaling: Double = 1.0 ) {
         self.provider = provider
         self.vector = vector
+        self.metadata = metadata
+        self.scaling = scaling 
     }
 }
 

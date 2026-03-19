@@ -60,7 +60,7 @@ public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
         case .nomicTextV1_5:
             "nomic"
         case .custom(let string):
-            "custom"
+            "\(string)"
         }
     }
     
@@ -82,7 +82,7 @@ public enum EmbeddingProviderOption: Sendable, Codable, Hashable {
             Color.blue
         case .nomicTextV1_5:
             Color.indigo
-        case .custom(let string):
+        case .custom(_):
             Color.gray
         }
     }
