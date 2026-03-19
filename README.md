@@ -35,6 +35,64 @@ targets: [
 
 ---
 
+## Understanding the Three Embedding Approaches
+
+An embedding converts a piece of text into a numeric vector — a point in a high-dimensional space where semantically related texts land close together. The three backends in this package represent fundamentally different philosophies about how to build that space, each with distinct trade-offs in quality, speed, and resource requirements.
+
+### Frequency-Dependent Linguistic (FDL) Embeddings
+
+**How it works.** FDL builds a vocabulary from a corpus you supply at initialization. Every unique token — after lemmatization and stop-word removal — becomes one dimension of the embedding space. To embed a new text, the library counts how many times each vocabulary token appears in that text. The result is a sparse vector whose length equals the vocabulary size.
+
+This is a *bag-of-words* model: word order does not matter, and meaning is captured purely through the co-occurrence of tokens. Two texts are considered similar if they share many of the same words in similar proportions.
+
+**What it is good at.** FDL works well in narrow, well-defined domains where the vocabulary is the signal. If you are comparing academic course descriptions within a program, or comparing documents that should share technical terminology, FDL is fast, fully offline, transparent, and interpretable — you can inspect every dimension and know exactly what it represents.
+
+**Key limitation.** FDL cannot handle synonymy or paraphrase. The sentences "the method was effective" and "the approach worked well" share almost no tokens and will appear maximally dissimilar, even though they mean the same thing. FDL is also sensitive to corpus coverage — words not seen at init time are silently ignored.
+
+**Normalization note.** FDL vectors are raw frequency counts and are **not L2-normalized**. Call `vector.normal` before computing cosine similarity or comparing against vectors from the other providers.
+
+---
+
+### Apple NLEmbedding (Word-Vector Averaging)
+
+**How it works.** Apple's `NaturalLanguage` framework ships pretrained word vectors — each individual word in the vocabulary maps to a fixed 512-dimensional vector learned from large text corpora using techniques like GloVe or Word2Vec. To embed a sentence, the library tokenizes the text and averages the vectors of all recognized words. The resulting 512-dimensional vector is L2-normalized before being returned.
+
+This is a *static word-vector* model: each word always maps to the same vector regardless of context. The word "bank" has one vector whether the sentence is about a river bank or a financial institution.
+
+**What it is good at.** NLEmbedding is the fastest option by a large margin — embeddings are computed synchronously on the CPU in microseconds and require no internet connection or GPU. The model is part of the OS and needs no download. It performs well for general-purpose similarity tasks, especially at the word and short-phrase level where lexical overlap is a reasonable proxy for meaning.
+
+**Key limitation.** Because word vectors are averaged, sentence-level structure and context are lost. Long passages with complex meaning tend to converge toward similar "average English" vectors, reducing discrimination. NLEmbedding also has a fixed vocabulary; out-of-vocabulary tokens (technical jargon, proper nouns, domain-specific abbreviations) are silently skipped. Use `runSafe` when benchmarking to skip pairs where too many tokens go unrecognized.
+
+---
+
+### GPU Transformer Embeddings (MLX)
+
+**How it works.** Transformer models process the entire input sequence at once, allowing every token's representation to be shaped by every other token in the sentence (the attention mechanism). The model was pretrained on billions of text examples and then fine-tuned specifically for the task of producing useful sentence embeddings — a process called contrastive learning, where similar sentence pairs are pulled together in the embedding space and dissimilar pairs are pushed apart.
+
+To embed text, `MLXEmbeddingService` tokenizes the input using the model's own subword tokenizer, runs a full forward pass on the GPU via MLX, and then applies mean pooling over the output token representations, followed by L2 normalization. The result is a dense vector (384–1024 dimensions depending on model) that encodes sentence-level meaning, not just word overlap.
+
+**What it is good at.** Transformer embeddings handle paraphrase, synonymy, and semantic nuance far better than the other approaches. "The method was effective" and "the approach worked well" will be close in vector space. They also handle domain-specific language better because subword tokenization can decompose unknown words into familiar pieces. The larger models (BGE Large, mxbai-embed-large) approach human-level semantic judgment on standard retrieval benchmarks.
+
+**Key limitation.** These models require a GPU (Metal), which means they cannot run in command-line `swift test` contexts without Xcode. The first run requires downloading model weights from HuggingFace Hub (90 MB for MiniLM, up to ~1.2 GB for the 1024d models). Inference is also slower than NLEmbedding — milliseconds per text rather than microseconds — though still fast enough for interactive use on Apple Silicon.
+
+---
+
+### Choosing a Backend
+
+| | FDL | NLEmbedding | MLX Transformer |
+|---|---|---|---|
+| **Captures synonymy / paraphrase** | No | Partial | Yes |
+| **Requires GPU** | No | No | Yes |
+| **Requires download** | No | No | Yes (90 MB – 1.2 GB) |
+| **Speed** | Microseconds | Microseconds | Milliseconds |
+| **Dimensions** | Vocab size (variable) | 512 | 384 – 1024 |
+| **Normalized** | No (call `.normal`) | Yes | Yes |
+| **Best for** | Domain term overlap, corpus analysis | Fast general similarity, word-level tasks | Semantic search, reranking, paraphrase detection |
+
+A common pattern is to use **NLEmbedding** for rapid prototyping and development on-device without a GPU, then switch to an **MLX model** for production quality. Use **FDL** when your task is inherently vocabulary-driven — comparing programs by their course terminology, tracking keyword prevalence over time, or any context where shared jargon is the explicit signal of interest.
+
+---
+
 ## Core Concepts
 
 ### `EmbeddingProvider`
