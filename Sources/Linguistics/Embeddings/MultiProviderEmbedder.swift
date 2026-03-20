@@ -117,10 +117,12 @@ public struct MultiProviderEmbedder: Sendable {
     /// - Parameter corpus: The corpus whose texts should be re-embedded.
     /// - Returns: One ``Corpus`` per active provider (new `UUID`s, same `label`).
     public func embed(corpus: Corpus) async throws -> [EmbeddingProviderOption: Corpus] {
-        let texts        = corpus.embeddings.map { $0.metadata["text"] ?? "" }
-        let parts        = corpus.embeddings.map { $0.metadata["part"] }
-        let granularites = corpus.embeddings.map { $0.metadata["granularity"] }
-        let scalings     = corpus.embeddings.map { $0.scaling }
+        let texts          = corpus.embeddings.map { $0.metadata["text"] ?? "" }
+        let parts          = corpus.embeddings.map { $0.metadata["part"] }
+        let granularities  = corpus.embeddings.map { $0.metadata["granularity"] }
+        let sequenceIdxs   = corpus.embeddings.map { $0.metadata["sequence_index"] }
+        let schemes        = corpus.embeddings.map { $0.metadata["scheme"] }
+        let scalings       = corpus.embeddings.map { $0.scaling }
 
         // Embed all texts through all providers
         let batchResults = try await embedBatch(texts)
@@ -134,9 +136,11 @@ public struct MultiProviderEmbedder: Sendable {
                 guard let embedding = perText[option] else { continue }
 
                 var meta = embedding.metadata
-                if let part = parts[idx]        { meta["part"] = part }
-                if let gran = granularites[idx]  { meta["granularity"] = gran }
-                if !texts[idx].isEmpty           { meta["text"] = texts[idx] }
+                if let part  = parts[idx]          { meta["part"]           = part  }
+                if let gran  = granularities[idx]   { meta["granularity"]    = gran  }
+                if !texts[idx].isEmpty              { meta["text"]           = texts[idx] }
+                if let seq   = sequenceIdxs[idx]    { meta["sequence_index"] = seq   }
+                if let sch   = schemes[idx]         { meta["scheme"]         = sch   }
 
                 newEmbeddings.append(TextEmbedding(
                     provider: option,

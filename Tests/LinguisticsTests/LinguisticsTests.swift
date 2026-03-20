@@ -2,6 +2,7 @@ import Testing
 @testable import Linguistics
 import NaturalLanguage
 import Foundation
+import SQLite3
 
 // MARK: - NLEmbeddingService Tests
 
@@ -879,4 +880,365 @@ func thresholdCalibratorWithMLX() async throws {
     #expect(output[.nlEmbedding] != nil)
     #expect(output[.nlEmbedding]?.embeddings.count == 2)
     #expect(output[.nlEmbedding]?.metadata["source_corpus_id"] == source.id.uuidString)
+}
+
+@Test func multiProviderEmbedderCorpusPreservesSequenceIndexAndScheme() async throws {
+    // Regression test: sequence_index and scheme must survive re-embedding through MultiProviderEmbedder.
+    let service = try NLEmbeddingService(language: .english)
+    let embedder = MultiProviderEmbedder(providers: [.nlEmbedding: service])
+
+    let vec = try await service.embed("Introduction paragraph text.")
+    let source = Corpus(
+        label: "Test Paper",
+        metadata: ["filename": "test.md"],
+        embeddings: [
+            TextEmbedding(provider: .nlEmbedding, vector: vec, metadata: [
+                "text": "Introduction section text.",
+                "part": "Introduction",
+                "granularity": "sectionAndParagraphs",
+                "sequence_index": "0",
+                "scheme": "introduction_hierarchical"
+            ]),
+            TextEmbedding(provider: .nlEmbedding, vector: vec, metadata: [
+                "text": "First paragraph.",
+                "part": "Introduction",
+                "granularity": "sectionAndParagraphs",
+                "sequence_index": "1",
+                "scheme": "introduction_hierarchical"
+            ]),
+        ]
+    )
+
+    let output = try await embedder.embed(corpus: source)
+    let result = try #require(output[.nlEmbedding])
+    #expect(result.embeddings.count == 2)
+
+    let indices = result.embeddings.compactMap { $0.metadata["sequence_index"] }
+    #expect(indices.contains("0"), "sequence_index 0 (full section) must be preserved")
+    #expect(indices.contains("1"), "sequence_index 1 (first paragraph) must be preserved")
+
+    let schemes = result.embeddings.compactMap { $0.metadata["scheme"] }
+    #expect(schemes.allSatisfy { $0 == "introduction_hierarchical" }, "scheme must be preserved on all embeddings")
+}
+
+// MARK: - ManuscriptLoader Tests
+
+/// Writes a temporary Markdown file and returns its URL. Call the `cleanup` closure when done.
+private func makeTempMarkdown(_ content: String) throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("test_\(UUID().uuidString).md")
+    try content.write(to: url, atomically: true, encoding: .utf8)
+    return url
+}
+
+/// Creates a temporary directory, writes named Markdown files, and returns the directory URL.
+private func makeTempMarkdownDirectory(_ files: [String: String]) throws -> URL {
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("loader_\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    for (name, content) in files {
+        try content.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+    }
+    return dir
+}
+
+@Test func manuscriptLoaderPartsFilter() async throws {
+    let markdown = """
+    # Test Paper
+
+    ## Introduction
+
+    This is the introduction describing research motivation.
+
+    ## Methods
+
+    Statistical methods applied to the data.
+
+    ## Results
+
+    Findings from the analysis.
+    """
+    let url = try makeTempMarkdown(markdown)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let service = try NLEmbeddingService(language: .english)
+    let corpus = try await ManuscriptLoader.load(
+        from: url,
+        parts: [.Introduction],
+        granularity: .section,
+        using: service,
+        as: .nlEmbedding
+    )
+
+    let parts = corpus.embeddings.compactMap { $0.metadata["part"] }
+    #expect(!parts.isEmpty, "Should have at least one Introduction embedding")
+    #expect(parts.allSatisfy { $0 == ManuscriptParts.Introduction.rawValue },
+            "Only Introduction embeddings should be present")
+    #expect(!parts.contains(ManuscriptParts.Methods.rawValue))
+    #expect(!parts.contains(ManuscriptParts.Results.rawValue))
+}
+
+@Test func manuscriptLoaderSectionAndParagraphsSequenceIndices() async throws {
+    let markdown = """
+    # Sample Paper
+
+    ## Introduction
+
+    First paragraph of the introduction.
+
+    Second paragraph providing more context.
+
+    Third paragraph concluding the introduction.
+    """
+    let url = try makeTempMarkdown(markdown)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let service = try NLEmbeddingService(language: .english)
+    let corpus = try await ManuscriptLoader.load(
+        from: url,
+        parts: [.Introduction],
+        granularity: .sectionAndParagraphs,
+        scheme: "intro_test",
+        using: service,
+        as: .nlEmbedding
+    )
+
+    let indices = corpus.embeddings.compactMap { $0.metadata["sequence_index"] }
+    #expect(indices.contains("0"), "Full section embedding must be at sequence_index 0")
+    #expect(indices.contains("1"), "First paragraph must be at sequence_index 1")
+
+    // scheme stamped on every embedding
+    let schemes = corpus.embeddings.compactMap { $0.metadata["scheme"] }
+    #expect(!schemes.isEmpty)
+    #expect(schemes.allSatisfy { $0 == "intro_test" })
+}
+
+@Test func manuscriptLoaderExtractTexts() throws {
+    let md1 = """
+    # Paper One
+
+    ## Introduction
+
+    Introduction of paper one.
+
+    ## Methods
+
+    Methods of paper one.
+    """
+    let md2 = """
+    # Paper Two
+
+    ## Introduction
+
+    Introduction of paper two.
+    """
+    let dir = try makeTempMarkdownDirectory(["a.md": md1, "b.md": md2])
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    // All sections: 2 from paper one + 1 from paper two
+    let allTexts = try ManuscriptLoader.extractTexts(from: dir)
+    #expect(allTexts.count == 3)
+
+    // Filter to Introduction only: 1 from each paper
+    let introTexts = try ManuscriptLoader.extractTexts(from: dir, parts: [.Introduction])
+    #expect(introTexts.count == 2)
+}
+
+@Test func manuscriptLoaderMultiProviderLoad() async throws {
+    let markdown = """
+    # Sample Paper
+
+    ## Introduction
+
+    This paper studies machine learning methods for natural language processing.
+
+    A second paragraph providing background on prior work.
+    """
+    let url = try makeTempMarkdown(markdown)
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let service = try NLEmbeddingService(language: .english)
+    let embedder = MultiProviderEmbedder(providers: [.nlEmbedding: service])
+
+    let corpus = try await ManuscriptLoader.load(
+        from: url,
+        parts: [.Introduction],
+        granularity: .sectionAndParagraphs,
+        scheme: "intro_hierarchical",
+        using: embedder
+    )
+
+    // 1 section (index 0) + 2 paragraphs (index 1, 2) = 3 embeddings per provider
+    #expect(corpus.embeddings.count >= 3)
+
+    let seqIndices = corpus.embeddings.compactMap { $0.metadata["sequence_index"] }
+    #expect(seqIndices.contains("0"), "Full-section embedding must be present")
+    #expect(seqIndices.contains("1"), "First paragraph embedding must be present")
+
+    let schemes = corpus.embeddings.compactMap { $0.metadata["scheme"] }
+    #expect(schemes.allSatisfy { $0 == "intro_hierarchical" }, "scheme must be stamped on every embedding")
+}
+
+// MARK: - End-to-end pipeline: fixture .md → ManuscriptLoader → NLEmbedding → CorpusStore
+
+/// Returns the `Fixtures/` directory adjacent to this source file.
+private var fixtureDirectory: URL {
+    URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .appendingPathComponent("Fixtures")
+}
+
+@Test func endToEndIntroductionPipelineToSQLite() async throws {
+    // ── 1. Locate fixture Markdown files ────────────────────────────────────
+    let dir = fixtureDirectory
+    let urls = try FileManager.default
+        .contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+        .filter { $0.pathExtension.lowercased() == "md" }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent }
+    #expect(urls.count == 2, "Expected 2 fixture .md files (Dyer_Sork and Smouse_etal)")
+
+    // ── 2. Embed Introduction sections with sectionAndParagraphs ────────────
+    let service = try NLEmbeddingService(language: .english)
+    let corpora = try await ManuscriptLoader.loadAll(
+        from: dir,
+        parts: [.Introduction],
+        granularity: .sectionAndParagraphs,
+        scheme: "introduction_hierarchical",
+        using: service,
+        as: .nlEmbedding
+    )
+    #expect(corpora.count == 2, "One Corpus per .md file")
+
+    // Every embedding must be from the Introduction and carry the correct metadata.
+    for corpus in corpora {
+        let parts = corpus.embeddings.compactMap { $0.metadata["part"] }
+        #expect(parts.allSatisfy { $0 == ManuscriptParts.Introduction.rawValue },
+                "Only Introduction embeddings expected in \(corpus.label)")
+
+        let grans = corpus.embeddings.compactMap { $0.metadata["granularity"] }
+        #expect(grans.allSatisfy { $0 == EmbeddingGranularity.sectionAndParagraphs.rawValue })
+
+        let schemes = corpus.embeddings.compactMap { $0.metadata["scheme"] }
+        #expect(schemes.allSatisfy { $0 == "introduction_hierarchical" })
+
+        // sequence_index 0 = full section; ≥1 = individual paragraphs.
+        let indices = corpus.embeddings.compactMap { $0.metadata["sequence_index"].flatMap(Int.init) }
+        #expect(indices.contains(0), "Full-section embedding (index 0) must be present")
+        #expect(indices.contains(where: { $0 >= 1 }), "At least one paragraph embedding must be present")
+    }
+
+    // Both papers should have DOIs extracted from the first 3000 chars.
+    let dois = corpora.compactMap { $0.metadata["doi"] }
+    #expect(dois.count == 2, "DOI should be extracted from both fixture files")
+    #expect(dois.allSatisfy { $0.hasPrefix("10.") })
+
+    // ── 3. Write to SQLite ───────────────────────────────────────────────────
+    let tmpURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("e2e_test_\(UUID().uuidString).sqlite")
+    defer { try? FileManager.default.removeItem(at: tmpURL) }
+
+    let store = try CorpusStore(url: tmpURL)
+    try store.write(corpora)
+
+    // ── 4. High-level read-back conformance ─────────────────────────────────
+    let loaded = try store.readAll()
+    #expect(loaded.count == 2)
+
+    for (original, restored) in zip(
+        corpora.sorted(by: { $0.label < $1.label }),
+        loaded.sorted(by: { $0.label < $1.label })
+    ) {
+        #expect(original.embeddings.count == restored.embeddings.count,
+                "Embedding count must survive round-trip for \(original.label)")
+
+        // Spot-check metadata keys are preserved.
+        for emb in restored.embeddings {
+            #expect(emb.metadata["part"] == ManuscriptParts.Introduction.rawValue)
+            #expect(emb.metadata["granularity"] == EmbeddingGranularity.sectionAndParagraphs.rawValue)
+            #expect(emb.metadata["scheme"] == "introduction_hierarchical")
+            #expect(emb.metadata["sequence_index"] != nil, "sequence_index must survive round-trip")
+            #expect(!(emb.metadata["text"] ?? "").isEmpty, "source_text must survive round-trip")
+            #expect(emb.provider == .nlEmbedding)
+        }
+    }
+
+    // ── 5. Raw SQLite schema conformance (PRAGMA table_info) ─────────────────
+    var rawDB: OpaquePointer?
+    defer { sqlite3_close(rawDB) }
+    #expect(sqlite3_open(tmpURL.path, &rawDB) == SQLITE_OK, "Should open SQLite file directly")
+
+    // documents table columns
+    var docColumns = [String]()
+    var stmt: OpaquePointer?
+    sqlite3_prepare_v2(rawDB, "PRAGMA table_info(documents)", -1, &stmt, nil)
+    while sqlite3_step(stmt) == SQLITE_ROW {
+        if let cstr = sqlite3_column_text(stmt, 1) { docColumns.append(String(cString: cstr)) }
+    }
+    sqlite3_finalize(stmt)
+    for col in ["id", "corpus_uuid", "title", "filename", "doi", "created_at"] {
+        #expect(docColumns.contains(col), "documents table missing column: \(col)")
+    }
+
+    // embeddings table columns
+    var embColumns = [String]()
+    sqlite3_prepare_v2(rawDB, "PRAGMA table_info(embeddings)", -1, &stmt, nil)
+    while sqlite3_step(stmt) == SQLITE_ROW {
+        if let cstr = sqlite3_column_text(stmt, 1) { embColumns.append(String(cString: cstr)) }
+    }
+    sqlite3_finalize(stmt)
+    for col in ["id", "document_id", "part", "granularity", "provider",
+                "dimensions", "vector", "scaling", "source_text", "sequence_index", "scheme"] {
+        #expect(embColumns.contains(col), "embeddings table missing column: \(col)")
+    }
+
+    // Spot-check actual row content in embeddings via raw SQL.
+    sqlite3_prepare_v2(rawDB,
+        "SELECT COUNT(*) FROM embeddings WHERE part = 'Introduction' AND scheme = 'introduction_hierarchical'",
+        -1, &stmt, nil)
+    sqlite3_step(stmt)
+    let introRowCount = Int(sqlite3_column_int(stmt, 0))
+    sqlite3_finalize(stmt)
+    #expect(introRowCount > 0, "Should have Introduction rows in embeddings table")
+
+    // Verify sequence_index = 0 rows (full-section embeddings) exist.
+    sqlite3_prepare_v2(rawDB,
+        "SELECT COUNT(*) FROM embeddings WHERE sequence_index = 0",
+        -1, &stmt, nil)
+    sqlite3_step(stmt)
+    let sectionRowCount = Int(sqlite3_column_int(stmt, 0))
+    sqlite3_finalize(stmt)
+    #expect(sectionRowCount == 2, "One full-section embedding (index 0) per paper")
+
+    // Verify paragraph rows (sequence_index ≥ 1) exist.
+    sqlite3_prepare_v2(rawDB,
+        "SELECT COUNT(*) FROM embeddings WHERE sequence_index >= 1",
+        -1, &stmt, nil)
+    sqlite3_step(stmt)
+    let paraRowCount = Int(sqlite3_column_int(stmt, 0))
+    sqlite3_finalize(stmt)
+    #expect(paraRowCount > 0, "Paragraph-level embeddings must be present")
+
+    // Every vector BLOB must be non-null and have consistent byte length.
+    sqlite3_prepare_v2(rawDB,
+        "SELECT dimensions, LENGTH(vector) FROM embeddings",
+        -1, &stmt, nil)
+    while sqlite3_step(stmt) == SQLITE_ROW {
+        let dims = Int(sqlite3_column_int(stmt, 0))
+        let blobBytes = Int(sqlite3_column_int(stmt, 1))
+        #expect(dims > 0, "dimensions must be positive")
+        #expect(blobBytes == dims * 4, "BLOB should be dims × 4 bytes (Float32)")
+    }
+    sqlite3_finalize(stmt)
+
+    print("""
+
+    ── End-to-end pipeline summary ──────────────────────────────────────
+    Papers loaded  : \(corpora.count)
+    Total embeddings written: \(corpora.reduce(0) { $0 + $1.embeddings.count })
+      • Full-section rows (index 0): \(sectionRowCount)
+      • Paragraph rows  (index ≥1) : \(paraRowCount)
+    documents columns : \(docColumns.joined(separator: ", "))
+    embeddings columns: \(embColumns.joined(separator: ", "))
+    ─────────────────────────────────────────────────────────────────────
+    """)
 }

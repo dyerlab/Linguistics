@@ -63,7 +63,8 @@ let package = Package(
         ),
         .testTarget(
             name: "LinguisticsTests",
-            dependencies: ["Linguistics"]
+            dependencies: ["Linguistics"],
+            resources: [.copy("Fixtures")]
         ),
     ]
 )
