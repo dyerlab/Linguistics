@@ -53,6 +53,7 @@ public final class CorpusStore: @unchecked Sendable {
             throw CorpusStoreError.openFailed(dbError)
         }
         try createSchema()
+        migrateSchema()
     }
 
     deinit { sqlite3_close(db) }
@@ -125,17 +126,29 @@ public final class CorpusStore: @unchecked Sendable {
                 created_at   TEXT
             );
             CREATE TABLE IF NOT EXISTS embeddings (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                document_id  INTEGER REFERENCES documents(id),
-                part         TEXT,
-                granularity  TEXT,
-                provider     TEXT,
-                dimensions   INTEGER,
-                vector       BLOB,
-                scaling      REAL,
-                source_text  TEXT
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_id    INTEGER REFERENCES documents(id),
+                part           TEXT,
+                granularity    TEXT,
+                provider       TEXT,
+                dimensions     INTEGER,
+                vector         BLOB,
+                scaling        REAL,
+                source_text    TEXT,
+                sequence_index INTEGER,
+                scheme         TEXT
             );
             """)
+    }
+
+    /// Adds columns introduced after the initial schema.
+    ///
+    /// SQLite does not support `ADD COLUMN IF NOT EXISTS`, so each statement is
+    /// attempted individually and any "duplicate column" error is silently ignored.
+    /// This keeps existing databases forward-compatible without a full migration.
+    private func migrateSchema() {
+        _ = try? exec("ALTER TABLE embeddings ADD COLUMN sequence_index INTEGER")
+        _ = try? exec("ALTER TABLE embeddings ADD COLUMN scheme TEXT")
     }
 
     // MARK: - Private write helpers
@@ -171,8 +184,9 @@ public final class CorpusStore: @unchecked Sendable {
     private func writeEmbedding(_ embedding: TextEmbedding, docID: Int64) throws {
         let sql = """
             INSERT INTO embeddings
-                (document_id, part, granularity, provider, dimensions, vector, scaling, source_text)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                (document_id, part, granularity, provider, dimensions, vector,
+                 scaling, source_text, sequence_index, scheme)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
         var stmt: OpaquePointer?
         guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
@@ -192,6 +206,12 @@ public final class CorpusStore: @unchecked Sendable {
         }
         sqlite3_bind_double(stmt, 7, embedding.scaling)
         bindText(stmt, 8, embedding.metadata["text"])
+        if let idxStr = embedding.metadata["sequence_index"], let idx = Int(idxStr) {
+            sqlite3_bind_int(stmt, 9, Int32(idx))
+        } else {
+            sqlite3_bind_null(stmt, 9)
+        }
+        bindText(stmt, 10, embedding.metadata["scheme"])
 
         guard sqlite3_step(stmt) == SQLITE_DONE else {
             throw CorpusStoreError.writeFailed(dbError)
@@ -202,7 +222,8 @@ public final class CorpusStore: @unchecked Sendable {
 
     private func readEmbeddings(for docID: Int64) throws -> [TextEmbedding] {
         let sql = """
-            SELECT part, granularity, provider, dimensions, vector, scaling, source_text
+            SELECT part, granularity, provider, dimensions, vector, scaling,
+                   source_text, sequence_index, scheme
             FROM embeddings WHERE document_id = ? ORDER BY id
             """
         var stmt: OpaquePointer?
@@ -221,11 +242,16 @@ public final class CorpusStore: @unchecked Sendable {
             let vector      = blobToVector(stmt, col: 4, dims: dims)
             let scaling     = sqlite3_column_double(stmt, 5)
             let sourceText  = columnString(stmt, 6)
+            let seqIdx      = sqlite3_column_type(stmt, 7) != SQLITE_NULL
+                                  ? Int(sqlite3_column_int(stmt, 7)) : nil
+            let scheme      = columnString(stmt, 8)
 
             var meta: [String: String] = [:]
             if let p = part        { meta["part"] = p }
             if let g = granularity { meta["granularity"] = g }
             if let t = sourceText  { meta["text"] = t }
+            if let i = seqIdx      { meta["sequence_index"] = "\(i)" }
+            if let s = scheme      { meta["scheme"] = s }
 
             embeddings.append(TextEmbedding(
                 provider: EmbeddingProviderOption(storeKey: providerKey),

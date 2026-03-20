@@ -48,13 +48,18 @@ public enum ManuscriptLoader {
     ///   - url: Path to a `.md` file.
     ///   - profile: The ``DocumentProfile`` used to classify section headings.
     ///              Defaults to ``DocumentProfile/scientificPaper``.
-    ///   - granularity: Whether to embed whole sections or individual paragraphs.
+    ///   - granularity: Whether to embed whole sections, individual paragraphs, or both
+    ///                  hierarchically (section + ordered paragraphs in one pass).
+    ///   - scheme: An optional analysis-scheme label (e.g. `"introduction_hierarchical"`)
+    ///             stamped on every ``TextEmbedding`` and written to the `scheme` column
+    ///             in ``CorpusStore``. Pass `nil` to leave the column empty.
     ///   - provider: Embedding backend.
     ///   - option: Provider tag attached to every ``TextEmbedding``.
     public static func load(
         from url: URL,
         profile: DocumentProfile = .scientificPaper,
         granularity: EmbeddingGranularity = .section,
+        scheme: String? = nil,
         using provider: any EmbeddingProvider,
         as option: EmbeddingProviderOption
     ) async throws -> Corpus {
@@ -67,7 +72,8 @@ public enum ManuscriptLoader {
         if let doi = extractDOI(from: markdown) { meta["doi"] = doi }
 
         let embeddings = try await makeEmbeddings(
-            from: sections, granularity: granularity, provider: provider, option: option
+            from: sections, granularity: granularity, scheme: scheme,
+            provider: provider, option: option
         )
 
         return Corpus(label: title, metadata: meta, embeddings: embeddings)
@@ -80,13 +86,15 @@ public enum ManuscriptLoader {
     /// - Parameters:
     ///   - directory: A directory URL containing `.md` files.
     ///   - profile: The ``DocumentProfile`` used to classify headings.
-    ///   - granularity: Section-level or paragraph-level chunking.
+    ///   - granularity: Section-level, paragraph-level, or hierarchical chunking.
+    ///   - scheme: Optional analysis-scheme label stamped on every ``TextEmbedding``.
     ///   - provider: Embedding backend.
     ///   - option: Provider tag attached to every ``TextEmbedding``.
     public static func loadAll(
         from directory: URL,
         profile: DocumentProfile = .scientificPaper,
         granularity: EmbeddingGranularity = .section,
+        scheme: String? = nil,
         using provider: any EmbeddingProvider,
         as option: EmbeddingProviderOption
     ) async throws -> [Corpus] {
@@ -98,7 +106,7 @@ public enum ManuscriptLoader {
         var corpora: [Corpus] = []
         for url in urls {
             let corpus = try await load(
-                from: url, profile: profile, granularity: granularity,
+                from: url, profile: profile, granularity: granularity, scheme: scheme,
                 using: provider, as: option
             )
             corpora.append(corpus)
@@ -168,6 +176,7 @@ public enum ManuscriptLoader {
     private static func makeEmbeddings(
         from sections: [(part: ManuscriptParts, text: String)],
         granularity: EmbeddingGranularity,
+        scheme: String?,
         provider: any EmbeddingProvider,
         option: EmbeddingProviderOption
     ) async throws -> [TextEmbedding] {
@@ -175,40 +184,90 @@ public enum ManuscriptLoader {
         var embeddings: [TextEmbedding] = []
 
         for (part, sectionText) in sections {
-            let chunks: [String]
-
             switch granularity {
+
             case .section:
-                chunks = [sectionText]
-
-            case .paragraph:
-                var paragraphs: [String] = []
-                let tokenizer = NLTokenizer(unit: .paragraph)
-                tokenizer.string = sectionText
-                tokenizer.enumerateTokens(in: sectionText.startIndex..<sectionText.endIndex) { range, _ in
-                    let para = String(sectionText[range])
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !para.isEmpty { paragraphs.append(para) }
-                    return true
-                }
-                chunks = paragraphs
-            }
-
-            for chunk in chunks {
-                let vector = try await provider.embed(chunk)
+                let vector = try await provider.embed(sectionText)
                 embeddings.append(TextEmbedding(
                     provider: option,
                     vector: vector,
-                    metadata: [
-                        "part": part.rawValue,
-                        "granularity": granularity.rawValue,
-                        "text": chunk
-                    ]
+                    metadata: metadataDict(
+                        part: part, granularity: granularity,
+                        text: sectionText, sequenceIndex: nil, scheme: scheme
+                    )
                 ))
+
+            case .paragraph:
+                for (index, para) in splitParagraphs(sectionText).enumerated() {
+                    let vector = try await provider.embed(para)
+                    embeddings.append(TextEmbedding(
+                        provider: option,
+                        vector: vector,
+                        metadata: metadataDict(
+                            part: part, granularity: granularity,
+                            text: para, sequenceIndex: index + 1, scheme: scheme
+                        )
+                    ))
+                }
+
+            case .sectionAndParagraphs:
+                // sequence_index 0 — full section
+                let sectionVector = try await provider.embed(sectionText)
+                embeddings.append(TextEmbedding(
+                    provider: option,
+                    vector: sectionVector,
+                    metadata: metadataDict(
+                        part: part, granularity: granularity,
+                        text: sectionText, sequenceIndex: 0, scheme: scheme
+                    )
+                ))
+                // sequence_index 1…N — individual paragraphs in order
+                for (index, para) in splitParagraphs(sectionText).enumerated() {
+                    let vector = try await provider.embed(para)
+                    embeddings.append(TextEmbedding(
+                        provider: option,
+                        vector: vector,
+                        metadata: metadataDict(
+                            part: part, granularity: granularity,
+                            text: para, sequenceIndex: index + 1, scheme: scheme
+                        )
+                    ))
+                }
             }
         }
 
         return embeddings
+    }
+
+    /// Splits `text` into non-empty paragraphs using `NLTokenizer`.
+    private static func splitParagraphs(_ text: String) -> [String] {
+        var paragraphs: [String] = []
+        let tokenizer = NLTokenizer(unit: .paragraph)
+        tokenizer.string = text
+        tokenizer.enumerateTokens(in: text.startIndex..<text.endIndex) { range, _ in
+            let para = String(text[range]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !para.isEmpty { paragraphs.append(para) }
+            return true
+        }
+        return paragraphs
+    }
+
+    /// Builds the metadata dictionary for a ``TextEmbedding``.
+    private static func metadataDict(
+        part: ManuscriptParts,
+        granularity: EmbeddingGranularity,
+        text: String,
+        sequenceIndex: Int?,
+        scheme: String?
+    ) -> [String: String] {
+        var meta: [String: String] = [
+            "part": part.rawValue,
+            "granularity": granularity.rawValue,
+            "text": text
+        ]
+        if let idx = sequenceIndex { meta["sequence_index"] = "\(idx)" }
+        if let s = scheme          { meta["scheme"] = s }
+        return meta
     }
 
     // MARK: - Metadata extraction

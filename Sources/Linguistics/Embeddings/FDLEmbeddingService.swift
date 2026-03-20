@@ -53,15 +53,34 @@ public final class FDLEmbeddingService: @unchecked Sendable {
 
     /// Creates a new service whose vocabulary is derived from `corpus`.
     ///
-    /// All strings in `corpus` are joined, lemmatised, stop-word filtered, and
-    /// deduplicated to produce a stable, sorted token list.  The vocabulary is
-    /// immutable after initialisation.
+    /// Each document in `corpus` is lemmatised, stop-word filtered, and lowercased
+    /// independently.  A token is retained in the vocabulary only if it appears in at
+    /// least `minimumDocumentFrequency` × `corpus.count` documents (document frequency,
+    /// not raw term frequency).  This trims the long tail of highly idiosyncratic terms
+    /// that would add noise without contributing signal.
     ///
-    /// - Parameter corpus: The documents that define the embedding vocabulary.
-    public init(corpus: [String]) {
-        let input = corpus.joined(separator: " ")
-        let tok = input.linguisticTokens(keepNumerics: false)
-        let sorted = Array(Set(tok)).sorted()
+    /// The vocabulary is immutable after initialisation.
+    ///
+    /// - Parameters:
+    ///   - corpus: The documents that define the embedding vocabulary.
+    ///   - minimumDocumentFrequency: Fraction of documents that must contain a token
+    ///     for it to be included. Defaults to `0.05` (5 %). Must be in `0…1`.
+    public init(corpus: [String], minimumDocumentFrequency: Double = 0.05) {
+        let threshold = max(1, Int((minimumDocumentFrequency * Double(corpus.count)).rounded(.up)))
+
+        var tokenDocCount: [String: Int] = [:]
+        for text in corpus {
+            let docTokens = Set(text.linguisticTokens(keepNumerics: false))
+            for token in docTokens {
+                tokenDocCount[token, default: 0] += 1
+            }
+        }
+
+        let sorted = tokenDocCount
+            .filter { $0.value >= threshold }
+            .map { $0.key }
+            .sorted()
+
         self.tokens = sorted
         self.tokenIndex = Dictionary(
             uniqueKeysWithValues: sorted.enumerated().map { ($0.element, $0.offset) }
