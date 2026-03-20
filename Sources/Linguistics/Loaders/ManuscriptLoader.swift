@@ -219,7 +219,7 @@ public enum ManuscriptLoader {
         granularity: EmbeddingGranularity = .sectionAndParagraphs,
         scheme: String? = nil,
         using embedder: MultiProviderEmbedder,
-        onProgress: (@Sendable (Int, Int, String) -> Void)? = nil
+        onProgress: (@Sendable (Int, Int, String) async -> Void)? = nil
     ) async throws -> [Corpus] {
         let urls = try FileManager.default
             .contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
@@ -247,7 +247,7 @@ public enum ManuscriptLoader {
             var completed = 0
             for try await (index, corpus) in group {
                 completed += 1
-                onProgress?(completed, total, corpus.metadata["filename"] ?? "")
+                await onProgress?(completed, total, corpus.metadata["filename"] ?? "")
                 indexed.append((index, corpus))
             }
         }
